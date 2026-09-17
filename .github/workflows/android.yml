@@ -1,0 +1,101 @@
+name: Android
+
+on:
+  push:
+    branches:
+      - develop
+      - android-port-ci
+    paths:
+      - "android/**"
+      - "src/**"
+      - "port/**"
+      - "assets/**"
+      - "lib/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/android.yml"
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "android/**"
+      - "src/**"
+      - "port/**"
+      - "assets/**"
+      - "lib/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arm64:
+    name: arm64-v8a debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build python3 zip unzip
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;30.0.15729638"
+
+          # AGP can use the runner's modern CMake instead of the old CMake
+          # bundled by older Android SDK images. PaperBoat/libultraship needs
+          # CMake 3.24 or newer.
+          CMAKE_BIN="$(command -v cmake)"
+          CMAKE_ROOT="$(dirname "$(dirname "$CMAKE_BIN")")"
+          printf 'sdk.dir=%s\ncmake.dir=%s\n' "$ANDROID_HOME" "$CMAKE_ROOT" > android/local.properties
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          cmake --version
+          "$ANDROID_HOME/ndk/30.0.15729638/ndk-build" --version || true
+
+      - name: Build debug APK
+        working-directory: android
+        shell: bash
+        run: |
+          chmod +x gradlew
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleDebug --stacktrace 2>&1 | tee ../android-build.log
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: PaperBoat-android-arm64-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload native build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: PaperBoat-android-build-log
+          path: android-build.log
+          if-no-files-found: warn
+          retention-days: 14

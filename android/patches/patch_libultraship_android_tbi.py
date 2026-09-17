@@ -64,7 +64,7 @@ replace_exact(
 replace_exact(
     "char* fileName = (char*)cmd->words.w1;",
     "char* fileName = const_cast<char*>(CanonicalizeAndroidString((const char*)cmd->words.w1));",
-    expected=2,
+    expected=3,
     label="canonicalize mutable filepath handlers",
 )
 replace_exact(

@@ -43,6 +43,9 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Patch libultraship for Android arm64 tagged pointers
+        run: python3 android/patches/patch_libultraship_android_tbi.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -74,9 +77,6 @@ jobs:
             "build-tools;36.0.0" \
             "ndk;30.0.15729638"
 
-          # AGP can use the runner's modern CMake instead of the old CMake
-          # bundled by older Android SDK images. PaperBoat/libultraship needs
-          # CMake 3.24 or newer.
           CMAKE_BIN="$(command -v cmake)"
           CMAKE_ROOT="$(dirname "$(dirname "$CMAKE_BIN")")"
           printf 'sdk.dir=%s\ncmake.dir=%s\n' "$SDK_ROOT" "$CMAKE_ROOT" > android/local.properties

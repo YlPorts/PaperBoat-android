@@ -25,7 +25,7 @@
 
 namespace {
 
-constexpr const char* kLogTag = "Paperboat";
+constexpr const char* kLogTag = "PaperMarioAndroid";
 constexpr const char* kGameArchive = "pm64.o2r";
 
 std::string ToStdString(JNIEnv* env, jstring value) {
@@ -48,11 +48,17 @@ extern "C" {
  * Whether libultraship's menu is up. A keyboard, a gamepad or the menu itself
  * can change this behind Kotlin's back, so ask the engine rather than mirror it.
  *
- * Races with the game thread by design: it decides whether one button shows,
- * and a torn read self-corrects on the next poll.
+ * MainActivity starts polling shortly after SDLActivity resumes, while the
+ * native game thread may still be creating Ship::Context. Treat that state as
+ * "menu closed" instead of dereferencing a null context and crashing startup.
  */
 JNIEXPORT jboolean JNICALL Java_dev_net64_paperboat_MainActivity_isMenuOpen(JNIEnv*, jobject) {
-    auto window = Ship::Context::GetRawInstance()->GetWindow();
+    auto* context = Ship::Context::GetRawInstance();
+    if (context == nullptr) {
+        return JNI_FALSE;
+    }
+
+    auto window = context->GetWindow();
     if (window == nullptr) {
         return JNI_FALSE;
     }

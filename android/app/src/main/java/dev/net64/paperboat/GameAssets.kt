@@ -33,6 +33,7 @@ object GameAssets {
 
     private const val TAG = "GameAssets"
     private const val GAME_ARCHIVE = "pm64.o2r"
+    private const val GAME_ARCHIVE_READY = ".pm64.o2r.ready"
     private const val CONTROLLER_DB = "gamecontrollerdb.txt"
     private const val TORCH_HASHES = "torch.hash.yml"
     private const val GAMEDATA_ZIP = "gamedata.zip"
@@ -46,9 +47,31 @@ object GameAssets {
 
     fun gameArchive(context: Context) = File(gameDir(context), GAME_ARCHIVE)
 
+    private fun gameArchiveReadyMarker(context: Context) = File(gameDir(context), GAME_ARCHIVE_READY)
+
     fun modsDir(context: Context) = File(gameDir(context), "mods")
 
-    fun isExtracted(context: Context) = gameArchive(context).length() > 0
+    /**
+     * An archive is usable only after the native extractor returned normally and
+     * the launcher wrote a completion marker containing its final byte length.
+     * A process kill/native crash can leave a non-empty pm64.o2r behind, so
+     * existence alone is deliberately not enough.
+     */
+    fun isExtracted(context: Context): Boolean {
+        val archive = gameArchive(context)
+        val marker = gameArchiveReadyMarker(context)
+        if (!archive.isFile || archive.length() <= 0L || !marker.isFile) return false
+
+        val completedLength = runCatching { marker.readText().trim().toLong() }.getOrNull() ?: return false
+        return completedLength == archive.length()
+    }
+
+    /** Remove generated state so the next extraction always starts cleanly. */
+    fun invalidateGeneratedArchive(context: Context) {
+        gameArchiveReadyMarker(context).delete()
+        gameArchive(context).delete()
+        File(gameDir(context), TORCH_HASHES).delete()
+    }
 
     /**
      * Unpacks the APK-bundled extraction inputs into [gameDir]. Re-runs whenever
@@ -108,8 +131,7 @@ object GameAssets {
 
             // New recipes make the previous archive stale, and Torch skips
             // work whose inputs it believes are unchanged.
-            gameArchive(context).delete()
-            File(target, TORCH_HASHES).delete()
+            invalidateGeneratedArchive(context)
 
             stamp.writeText(expected)
             null
@@ -130,13 +152,49 @@ object GameAssets {
         nativeDetectRom(rom.absolutePath, gameDir(context).absolutePath)
 
     /**
-     * Runs Torch over [romFile] to produce pm64.o2r. Blocking and slow — expect
-     * a minute or more on older hardware. Returns an error message, or null on
-     * success.
+     * Runs Torch over [romFile] to produce pm64.o2r. Blocking and slow. The
+     * ready marker is written only after native extraction returned successfully,
+     * which makes an interrupted extraction recoverable on the next launch.
      */
     fun generateGameArchive(context: Context): String? {
         val dir = gameDir(context)
-        return nativeGenerateGameArchive(romFile(context).absolutePath, dir.absolutePath, dir.absolutePath)
+        val archive = gameArchive(context)
+        val readyMarker = gameArchiveReadyMarker(context)
+
+        // Never let Torch continue from an archive left by a killed process.
+        invalidateGeneratedArchive(context)
+        Log.i(TAG, "Starting ROM asset extraction")
+
+        val nativeError = try {
+            nativeGenerateGameArchive(romFile(context).absolutePath, dir.absolutePath, dir.absolutePath)
+        } catch (error: Throwable) {
+            Log.e(TAG, "ROM asset extraction threw before completion", error)
+            invalidateGeneratedArchive(context)
+            return "Could not extract the ROM assets: ${error.message ?: error.javaClass.simpleName}"
+        }
+
+        if (nativeError != null) {
+            Log.e(TAG, "ROM asset extraction failed: $nativeError")
+            invalidateGeneratedArchive(context)
+            return nativeError
+        }
+
+        if (!archive.isFile || archive.length() <= 0L) {
+            invalidateGeneratedArchive(context)
+            return "The extractor finished without producing a usable $GAME_ARCHIVE."
+        }
+
+        return try {
+            // Persist the exact finished size; isExtracted() rejects a later
+            // truncated/replaced archive even if it is still non-empty.
+            readyMarker.writeText(archive.length().toString())
+            Log.i(TAG, "ROM asset extraction completed (${archive.length()} bytes)")
+            null
+        } catch (error: IOException) {
+            Log.e(TAG, "Could not mark the generated archive complete", error)
+            invalidateGeneratedArchive(context)
+            "The ROM assets were generated, but their completion marker could not be saved: ${error.message}"
+        }
     }
 
     private const val COPY_BUFFER_BYTES = 1 shl 17

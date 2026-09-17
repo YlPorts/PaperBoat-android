@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Paperboat</string>
+    <string name="app_name">Paper Mario Android</string>
     <string name="mods_button">Mods</string>
     <string name="saves_title">Saves</string>
     <string name="launcher_choose_rom">Choose Paper Mario ROM</string>

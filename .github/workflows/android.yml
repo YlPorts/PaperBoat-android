@@ -5,6 +5,7 @@ on:
     branches:
       - develop
       - android-port-ci
+      - android-ui-v3-multiregion
     paths:
       - "android/**"
       - "src/**"
@@ -54,6 +55,9 @@ jobs:
 
       - name: Patch Android mobile UI
         run: python3 android/patches/patch_android_mobile_ui.py
+
+      - name: Refine Android mobile UI V3
+        run: python3 android/patches/patch_android_mobile_ui_v3.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5

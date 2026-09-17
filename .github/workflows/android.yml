@@ -49,6 +49,9 @@ jobs:
       - name: Patch Android touch controls
         run: python3 android/patches/patch_touch_controls_android.py
 
+      - name: Patch Android arm64 RAW16 audio
+        run: python3 android/patches/patch_android_audio_arm64.py
+
       - name: Patch Android mobile UI
         run: python3 android/patches/patch_android_mobile_ui.py
 

@@ -20,13 +20,17 @@ def replace_exact(old: str, new: str, expected: int = 1, label: str = "replaceme
     text = text.replace(old, new)
 
 
-needle = """// A resolved address still in the N64 segmented range (<= 0x0FFFFFFF) usually means SegAddr
-// failed to resolve it (segment not set up). Keep it only if it belongs to a loaded module,
+# Keep the helpers near the top of the Fast namespace so every RDP/RSP/S2DEX
+# handler below can use them.
+needle = """namespace Fast {
+
+static UcodeHandlers ucode_handler_index = ucode_f3dex2;
 """
-helper = """// Android arm64 uses the top byte of heap pointers as an allocation tag. The CPU
-// ignores it when dereferencing (Top Byte Ignore), but numeric range checks and
-// pointer-keyed resource paths must use the canonical address or valid OTR assets
-// can be rejected as kernel/sentinel addresses.
+helper = """namespace Fast {
+
+// Android arm64 may store an allocation tag in the top byte of a heap pointer.
+// AArch64 dereferences it through Top Byte Ignore, but numeric range checks and
+// pointer-keyed resource lookups need the canonical address.
 static inline uintptr_t CanonicalizeAndroidPointer(uintptr_t addr) {
 #if defined(__ANDROID__) && UINTPTR_MAX > 0xFFFFFFFFu
     return addr & 0x00FFFFFFFFFFFFFFull;
@@ -39,22 +43,32 @@ static inline const char* CanonicalizeAndroidString(const char* ptr) {
     return reinterpret_cast<const char*>(CanonicalizeAndroidPointer(reinterpret_cast<uintptr_t>(ptr)));
 }
 
-// A resolved address still in the N64 segmented range (<= 0x0FFFFFFF) usually means SegAddr
-// failed to resolve it (segment not set up). Keep it only if it belongs to a loaded module,
+static UcodeHandlers ucode_handler_index = ucode_f3dex2;
 """
-replace_exact(needle, helper, label="insert canonical pointer helper")
+replace_exact(needle, helper, label="insert canonical pointer helpers")
 
+# Standard RDP texture image path.
 replace_exact(
     "uintptr_t i = (uintptr_t)gfx->SegAddr(cmd->words.w1);",
     "uintptr_t i = CanonicalizeAndroidPointer((uintptr_t)gfx->SegAddr(cmd->words.w1));",
     label="canonicalize G_SETTIMG address",
 )
+
+# OTR filepath opcodes are range-checked before their handlers run. Without
+# canonicalization Android tagged pointers are rejected before resource loading.
 replace_exact(
     "uintptr_t w1 = (uintptr_t)cmd->words.w1;",
     "uintptr_t w1 = CanonicalizeAndroidPointer((uintptr_t)cmd->words.w1);",
     label="canonicalize OTR filepath guard",
 )
 
+# Do the special const-from-mutable spelling first. Otherwise the generic
+# `char* fileName` substring also matches this line.
+replace_exact(
+    "const char* fileName = (char*)cmd->words.w1;",
+    "const char* fileName = CanonicalizeAndroidString((const char*)cmd->words.w1);",
+    label="canonicalize texture filepath handler",
+)
 replace_exact(
     "const char* fileName = (const char*)cmd->words.w1;",
     "const char* fileName = CanonicalizeAndroidString((const char*)cmd->words.w1);",
@@ -64,13 +78,8 @@ replace_exact(
 replace_exact(
     "char* fileName = (char*)cmd->words.w1;",
     "char* fileName = const_cast<char*>(CanonicalizeAndroidString((const char*)cmd->words.w1));",
-    expected=3,
+    expected=2,
     label="canonicalize mutable filepath handlers",
-)
-replace_exact(
-    "const char* fileName = (char*)cmd->words.w1;",
-    "const char* fileName = CanonicalizeAndroidString((const char*)cmd->words.w1);",
-    label="canonicalize texture filepath handler",
 )
 replace_exact(
     "gfx_push_current_dir((char*)(*cmd0)->words.w1);",
@@ -82,6 +91,8 @@ replace_exact(
     "const char* path = CanonicalizeAndroidString((const char*)gfx->SegAddr(cmd->words.w1));",
     label="canonicalize shader filepath",
 )
+
+# S2DEX backgrounds can carry resource-backed image pointers too.
 replace_exact(
     "uintptr_t data = (uintptr_t)bg->b.imagePtr;",
     "uintptr_t data = CanonicalizeAndroidPointer((uintptr_t)bg->b.imagePtr);",
@@ -89,6 +100,8 @@ replace_exact(
     label="canonicalize S2DEX image pointers",
 )
 
+# Upstream already masks the pointer for one numeric comparison. Canonicalize it
+# once instead, then use the same address for both validation and signature read.
 replace_exact(
     """int32_t gfx_check_image_signature(const char* imgData) {
     uintptr_t i = (uintptr_t)(imgData);

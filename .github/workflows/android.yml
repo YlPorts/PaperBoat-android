@@ -57,8 +57,19 @@ jobs:
       - name: Install Android SDK components
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+          fi
+          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then
+            echo "sdkmanager was not found under $SDK_ROOT/cmdline-tools" >&2
+            find "$SDK_ROOT" -maxdepth 4 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;30.0.15729638"
@@ -68,11 +79,12 @@ jobs:
           # CMake 3.24 or newer.
           CMAKE_BIN="$(command -v cmake)"
           CMAKE_ROOT="$(dirname "$(dirname "$CMAKE_BIN")")"
-          printf 'sdk.dir=%s\ncmake.dir=%s\n' "$ANDROID_HOME" "$CMAKE_ROOT" > android/local.properties
+          printf 'sdk.dir=%s\ncmake.dir=%s\n' "$SDK_ROOT" "$CMAKE_ROOT" > android/local.properties
 
-          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT"
+          "$SDKMANAGER" --version
           cmake --version
-          "$ANDROID_HOME/ndk/30.0.15729638/ndk-build" --version || true
+          "$SDK_ROOT/ndk/30.0.15729638/ndk-build" --version || true
 
       - name: Build debug APK
         working-directory: android
